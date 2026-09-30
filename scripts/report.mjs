@@ -1,6 +1,6 @@
-// Baut results/REPORT.md (+ CSVs) aus den JSON-Ergebnissen.
+// Baut results/<version>/REPORT.md (+ CSVs, summary.json) aus den JSON-Ergebnissen.
 // Jede Tabelle wird gegen ihre Summe geprüft; Abweichungen stehen oben im Report.
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { OUT } from '../harness/core.mjs';
 import { loadViolations, localPages } from '../harness/dataset.mjs';
@@ -12,6 +12,7 @@ const semsim = load('semantic_similarity.json');
 const pagesRes = load('pages.json');
 
 const L = [];
+const K = {}; // Kennzahlen für den Versionsvergleich (summary.json)
 const problems = [];
 const p = (s = '') => L.push(s);
 const pct = (a, b) => (b ? ((100 * a) / b).toFixed(1) + ' %' : '–');
@@ -22,7 +23,7 @@ const csv = (rows) => rows.map((r) => r.map((c) => `"${String(c ?? '').replace(/
 const assertSum = (label, parts, total) => { const s = parts.reduce((a, b) => a + b, 0); if (s !== total) problems.push(`${label}: Summe ${s} ≠ ${total}`); };
 
 const m = (pagesRes || contrast || semantic).meta;
-p('# AugmentAble – Evaluation gegen AccessGuru');
+p(`# AugmentAble v${m.userscript.version} – Evaluation gegen AccessGuru`);
 p();
 p(`Erstellt ${m.created} · Userscript v${m.userscript.version} (sha256 \`${m.userscript.sha256.slice(0, 12)}…\`) · axe-core ${m.axe} · Commit ${m.git || 'lokal'}`);
 p();
@@ -31,7 +32,7 @@ p();
 p('<!--PROBLEMS-->');
 p();
 
-// ─── 1. Korpus ────────────────────────────────────────────────────────────────────────────
+// ─── 1. Korpus ──────────────────────────────────────────────────────────────
 let V = [];
 try { V = loadViolations(); } catch {}
 if (V.length) {
@@ -79,6 +80,7 @@ if (pagesRes) {
   table(['Regel', 'vorher', 'nachher', 'Delta', 'repariert: belegt', 'ungeprüft', 'Schein', 'versteckt', 'Delta bereinigt'],
     rows.filter((x) => x.b || x.a).map((x) => [x.r, x.b, x.a, (x.d > 0 ? '+' : '') + x.d, x.belegt, x.ungeprueft, x.schein, x.versteckt, (x.d + x.schein + x.versteckt > 0 ? '+' : '') + (x.d + x.schein + x.versteckt)]));
   const sB = F.filter((f) => f.bucket === 'Schein').length + F.filter((f) => f.bucket === 'versteckt').length;
+  Object.assign(K, { seiten: ok.length, axe_vorher: B.length, axe_nachher: A.length, axe_delta: A.length - B.length, axe_delta_bereinigt: A.length - B.length + sB, abstuerze: ok.filter((x) => x.injectError).length });
   p(`Summe Schein-/Versteck-Reparaturen: **${sB}** Knoten. Bereinigtes Gesamtdelta: **${A.length - B.length + sB}** (${pct(A.length - B.length + sB, B.length)}) statt ${A.length - B.length}.`);
   p();
 
@@ -98,6 +100,8 @@ if (pagesRes) {
     };
     const head = ['', 'annotiert', 'zuordenbar', 'behoben', 'davon inhaltlich', 'teilweise', 'nicht behoben', 'nicht zuordenbar', 'Recall (axe)', 'Recall streng'];
     table(head, [...Object.entries(count(ann, 'category')).map(([c]) => [c, ...agg(ann.filter((a) => a.category === c))]), ['**gesamt**', ...agg(ann)]]);
+    { const z = ann.filter((a) => a.status !== 'nicht zuordenbar'); K.recall = z.length ? ann.filter((a) => a.status === 'behoben').length / z.length : null;
+      K.recall_streng = z.length ? z.filter((a) => a.status === 'behoben' && a.buckets.every((b) => b === 'belegt')).length / z.length : null; }
     const byRule = Object.keys(count(ann, 'rule')).map((r) => [r, ...agg(ann.filter((a) => a.rule === r))]).sort((a, b) => b[1] - a[1]);
     p('<details><summary>Nach Regel</summary>'); p(); table(['Regel', ...head.slice(1)], byRule); p('</details>'); p();
     p('Die 33 semantischen Annotationen des Volldatensatzes sind Teil der 55 Fälle mit Expertenkorrekturen und werden in Abschnitt 4 ausgewertet.');
@@ -115,6 +119,7 @@ if (semsim) {
   table(['Violation-Typ', 'n', 'vom Skript verändert', 'näher an Korrektur', 'weiter weg', 'sim vorher', 'sim nachher'],
     Object.entries(semsim.by_type).map(([k, v]) => [k, v.n, v.angefasst, v.besser, v.schlechter, fmt(v.sim_vorher), fmt(v.sim_nachher)]));
   const ch = semsim.items.filter((i) => i.changed);
+  K.sem_veraendert = ch.length; K.sem_naeher = ch.filter((i) => i.delta > 0.05).length; K.sem_weiter = ch.filter((i) => i.delta < -0.05).length;
   if (ch.length) {
     p('Alle Fälle, in denen das Skript den relevanten Wert verändert hat:');
     p();
@@ -153,6 +158,25 @@ if (semsim) {
   p(`Auslöser im Originalfall: Das Skript beschreibt nur Bilder mit fehlendem/leerem alt, alt = src oder alt = "image". In den ${trig.length} Fällen *nicht beschreibender* Alt-Texte wurde es **${trig.filter((i) => i.changed).length}-mal** aktiv.`);
   p();
 }
+const viz = load('vizwiz_summary.json');
+if (viz) {
+  const s = viz.summary;
+  Object.assign(K, { viz_sim: s.sim_mean, viz_ceiling: s.human_ceiling, viz_beschrieben: `${s.beschrieben}/${s.n}`, viz_deutsch: `${s.de_deutsch}/${s.de_n}`, viz_stabil: s.stability });
+  p(`**VizWiz-Captions** (Fotos blinder Menschen, je 5 menschliche Beschreibungen; Stichprobe n = ${s.n}, Metrik ${s.metric}):`);
+  p();
+  table(['Kennzahl', 'Wert', 'Einordnung'], [
+    ['beschrieben', `${s.beschrieben}/${s.n}`, 'Rest: Fehler/keine Antwort'],
+    ['Ähnlichkeit KI ↔ Menschen (Mittel)', fmt(s.sim_mean), `Obergrenze Mensch ↔ Mensch: **${fmt(s.human_ceiling)}**`],
+    ['Ähnlichkeit KI ↔ bester menschlicher Text', fmt(s.sim_max), ''],
+    ['Stabilität (Lauf 1 ↔ Lauf 2)', fmt(s.stability), `n = ${s.n_stability}; 1,0 = identisch`],
+    ['deutsche Seite → deutscher Alt-Text', `${s.de_deutsch}/${s.de_n}`, `englisch: ${s.de_englisch}`],
+    ['Länge (Median, Zeichen)', s.laenge_median, `über 125 Zeichen: ${s.ueber_125_zeichen}`],
+    ['beginnt mit „Image of …“', s.beginnt_mit_image_of, 'für Screenreader redundant'],
+    ['Modelle', Object.entries(s.modelle).map(([k, v]) => `${k}: ${v}`).join('<br>'), 'Fallback-Kette'],
+  ]);
+  p('Blinde menschliche Bewertung: `rating_sheet.csv` ausfüllen (Text A/B, Herkunft verdeckt), Auflösung in `rating_key.csv`.');
+  p();
+}
 if (pagesRes) {
   const se = pagesRes.pages.filter((x) => !x.failed).map((x) => x.sideEffects);
   const st = se.reduce((o, s) => { for (const [k, v] of Object.entries(s.kiBilder || {})) o[k] = (o[k] || 0) + v; return o; }, {});
@@ -161,7 +185,7 @@ if (pagesRes) {
   p();
 }
 
-// ─── 6. Schäden ──────────────────────────────────────────────────────────────────────────
+// ─── 6. Schäden ──────────────────────────────────────────────────────────────
 if (pagesRes) {
   const ok = pagesRes.pages.filter((x) => !x.failed);
   const labels = ok.flatMap((x) => x.labels);
@@ -175,13 +199,16 @@ if (pagesRes) {
       return [kind, src, n, pct(n, tot), labels.find((l) => l.kind === kind && l.src === src).bucket];
     }));
   const bl = count(labels, 'bucket');
+  K.labels = labels.length; K.praezision_streng = labels.length ? (bl.belegt || 0) / labels.length : null; K.praezision_grosszuegig = labels.length ? ((bl.belegt || 0) + (bl['ungeprüft'] || 0)) / labels.length : null;
+  K.anker_ohne_href = labels.filter((l) => l.noHref).length;
   p(`Automatische Präzision: streng ${pct(bl.belegt || 0, labels.length)} (nur *belegt*), großzügig ${pct((bl.belegt || 0) + (bl['ungeprüft'] || 0), labels.length)} (inkl. *ungeprüft*). ` +
     'Die tatsächliche Präzision ergibt sich aus der manuellen Stichprobe `manual_review_sample.csv`.');
   p();
-  p(`Links ohne \`href\`, die ein aria-label bekommen (→ \`aria-prohibited-attr\`): **${labels.filter((l) => l.noHref).length}**.`);
+  p(`Links ohne \`href\`, die ein aria-label bekommen (→ \`aria-prohibited-attr\`): **${labels.filter((l) => l.noHref).length}**. Elemente ohne verlässlichen Namen, die nur gemeldet wurden: **${ok.reduce((a, x) => a + (x.sideEffects.gemeldetOhneName || 0), 0)}**.`);
   p();
 
   const ov = ok.flatMap((x) => x.overwritten.map((o) => ({ ...o, file: x.file })));
+  K.namen_ueberschrieben = ov.length;
   p('### 6.2 Vorhandene Namen überschrieben oder entfernt');
   p();
   p('Elemente, die *vor* dem Skript bereits einen zugänglichen Namen hatten und danach einen anderen oder keinen:');
@@ -192,6 +219,7 @@ if (pagesRes) {
   p('</details>'); p();
 
   const wt = ok.flatMap((x) => x.warnTitles);
+  K.warntext_title = wt.length; K.warntext_als_name = wt.filter((w) => w.isName).length;
   p('### 6.3 Diagnosetext in `title`');
   p();
   table(['', 'Anzahl'], [
@@ -200,19 +228,21 @@ if (pagesRes) {
     ['… davon zur Beschreibung (Name kam aus anderer Quelle)', wt.filter((w) => !w.isName).length],
     ['… davon vorhandenes title überschrieben', wt.filter((w) => w.overwroteTitle).length],
   ]);
-  p('`checkHeadings()`/`checkLabels()` sind als Diagnose gedacht, schreiben aber in die produktive Oberfläche: Der Text erscheint als Tooltip für alle und wird von Screenreadern als Name oder Beschreibung vorgelesen. Das ist ein direkter Schaden, keine Nebenwirkung.');
+  p('`checkHeadings()`/`checkLabels()` (v140) sind als Diagnose gedacht, schreiben aber in die produktive Oberfläche: Der Text erscheint als Tooltip für alle und wird von Screenreadern als Name oder Beschreibung vorgelesen. Das ist ein direkter Schaden, keine Nebenwirkung.');
   p();
 
   const langSet = ok.filter((x) => !x.langBefore && x.langAfter);
   const mism = langSet.filter((x) => x.textLang !== 'und' && x.textLang !== x.langAfter);
-  p('### 6.4 `lang="en"` ohne Prüfung');
+  K.lang_gesetzt = langSet.length; K.lang_falsch = mism.length;
+  p('### 6.4 `lang` ohne Prüfung');
   p();
-  p(`Seiten ohne lang, denen das Skript \`lang="${langSet[0]?.langAfter || 'en'}"\` gesetzt hat: **${langSet.length}**; erkannte Textsprache (franc) weicht ab: **${mism.length}** → im AccessGuru-Sinn neue *lang-mismatch*-Violations (semantisch). ` +
+  p(`Seiten ohne lang, denen das Skript ein \`lang\` gesetzt hat: **${langSet.length}**; erkannte Textsprache (franc) weicht ab: **${mism.length}** → im AccessGuru-Sinn neue *lang-mismatch*-Violations (semantisch). ` +
     `Sprache nicht bestimmbar (< 200 Zeichen): ${langSet.filter((x) => x.textLang === 'und').length}.`);
-  if (mism.length) { p(); table(['Seite', 'erkannte Sprache'], mism.map((x) => [x.file, x.textLang])); }
+  if (mism.length) { p(); table(['Seite', 'gesetzt', 'erkannte Sprache'], mism.map((x) => [x.file, x.langAfter, x.textLang])); }
   p();
 
   const sum = (k) => ok.reduce((a, x) => a + (+x.sideEffects[k] || 0), 0);
+  K.svg_links_versteckt = sum('svgVersteckteLinks');
   p('### 6.5 Weitere Eingriffe');
   p();
   table(['Beobachtung', 'Anzahl'], [
@@ -234,13 +264,18 @@ if (pagesRes) {
   p();
   const B = ok.flatMap((x) => x.before);
   const newNodes = ok.flatMap((x) => { const bk = new Set(x.before.map((n) => n.rule + '|' + n.evalId)); return x.after.filter((n) => !n.evalId || !bk.has(n.rule + '|' + n.evalId)).map((n) => ({ ...n, file: x.file })); });
+  K.neue_verstoesse = newNodes.length;
   const mk = (n) => (n.marker ? Object.entries(n.marker).filter(([, v]) => v).map(([k]) => k).join('+') || 'ohne Marker' : 'nicht markierbar');
   table(['Regel', 'neue Knoten', 'Seiten', 'Marker am Element'], Object.entries(count(newNodes, 'rule')).sort((a, b) => b[1] - a[1]).map(([r, n]) => {
     const s = newNodes.filter((x) => x.rule === r); return [r, n, new Set(s.map((x) => x.file)).size, Object.entries(count(s, mk)).map(([k, v]) => `${k}: ${v}`).join(', ')];
   }));
+  const moved = newNodes.filter((n) => n.rule === 'color-contrast-enhanced' && n.marker && n.marker.contrast && B.some((b) => b.evalId === n.evalId && b.rule === 'color-contrast'));
+  if (moved.length) p(`Davon ${moved.length} \`color-contrast-enhanced\`-Knoten, die vorher AA verfehlten und jetzt AA erfüllen, AAA aber noch nicht – axe meldet sie erst jetzt unter der AAA-Regel. Das ist eine Verbesserung, keine Regression.`);
+  p();
   p('## 8. Verstöße des eingeblendeten Panels');
   p();
   const P = ok.flatMap((x) => x.panel || []);
+  K.panel_verstoesse = P.length;
   table(['Regel', 'Knoten (Summe)'], Object.entries(count(P, 'rule')).map(([r, n]) => [r, n]));
   p('## 9. Fehlgeschlagene Seiten / Skriptabstürze');
   p();
@@ -254,7 +289,7 @@ if (pagesRes) {
     ...sample.map((l) => [l.file, l.url, l.kind, l.src, l.bucket, l.label, l.nameBefore, l.html, '', ''])]));
 }
 
-// ─── 10. Kontrast ──────────────────────────────────────────────────────────────────────────
+// ─── 10. Kontrast ────────────────────────────────────────────────────────────
 if (contrast) {
   p('## 10. Kontrast-Modul');
   p();
@@ -277,6 +312,7 @@ if (contrast) {
       table(['Regel', 'fg', 'bg', 'Größe', 'Schnitt', 'vorher', 'nachher', 'neue Farbe'], s.verschlechtert.map((x) => [x.rule, x.fg, x.bg, x.fontSizeRaw, x.weight, fmt(x.r0), fmt(x.r1), x.color1]));
       p('</details>'); p();
     }
+    K['kontrast_' + v] = { behoben_aa: s.aa.behoben, verschlechtert: s.orig.verschlechtert, markiert: s.angefasst, n: s.n };
     table(['Regel', 'n', 'behoben (Original-Schwelle)', 'behoben (AA)'], Object.entries(s.nach_regel).map(([r, x]) => [r, x.n, `${x.behoben_orig} (${pct(x.behoben_orig, x.n)})`, `${x.behoben_aa} (${pct(x.behoben_aa, x.n)})`]));
   }
 }
@@ -284,8 +320,9 @@ if (contrast) {
 let md = L.join('\n');
 md = md.replace('<!--PROBLEMS-->', problems.length ? '> ✗ **Konsistenzprüfung fehlgeschlagen:**\n' + problems.map((x) => '> - ' + x).join('\n') : '> ✓ Konsistenzprüfung: alle Tabellen summieren sich auf ihre Grundgesamtheit.');
 writeFileSync(path.join(OUT, 'REPORT.md'), md);
+writeFileSync(path.join(OUT, 'summary.json'), JSON.stringify({ meta: m, ...K }, null, 1));
 if (semsim) writeFileSync(path.join(OUT, 'semantic_items.csv'), csv([['nr', 'typ', 'verändert', 'vorher', 'nachher', 'expert_innen', 'sim_vorher', 'sim_nachher', 'delta', 'ki_alt', 'ki_sim'],
   ...semsim.items.map((i) => [i.no, i.type, i.changed, JSON.stringify(i.before), JSON.stringify(i.after), JSON.stringify(i.human || []), i.sim_before, i.sim_after, i.delta, i.ai_alt, i.ai_sim])]));
-console.log('→ results/REPORT.md', problems.length ? `(${problems.length} Konsistenzprobleme)` : '');
-if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+console.log(`→ ${path.relative(process.cwd(), OUT)}/REPORT.md`, problems.length ? `(${problems.length} Konsistenzprobleme)` : '');
+if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, '\n' + md + '\n');
 if (problems.length) process.exitCode = 1;
