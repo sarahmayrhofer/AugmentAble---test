@@ -1,0 +1,38 @@
+name: KI-Check
+
+# Kurzer Test (ca. 1–2 Minuten): Antworten die HuggingFace-Modelle des Skripts wirklich?
+# Voraussetzung: Secret HF_API_KEY (Settings → Secrets and variables → Actions)
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: 'Skriptversion'
+        type: choice
+        options: [fixed, original]
+        default: fixed
+
+permissions:
+  contents: read
+
+jobs:
+  ki-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HF_API_KEY: ${{ secrets.HF_API_KEY }}
+      SCRIPT: ${{ inputs.script }}
+      AI_WAIT_MS: '90000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Testbilder holen
+        run: npm run fetch
+        env: { SKIP_DARUS: '1' }
+      - name: Echte HuggingFace-Aufrufe über den Skriptpfad
+        run: npm run ai-check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ki-check, path: results/ }
