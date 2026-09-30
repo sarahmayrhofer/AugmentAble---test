@@ -2,7 +2,9 @@ node_modules/
 data/accessguru/
 data/darus/
 data/pages/
+data/vizwiz/
 data/darus-manifest.json
 results/
 cache/
+docs/
 .env

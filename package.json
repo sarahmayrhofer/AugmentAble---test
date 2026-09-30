@@ -5,12 +5,18 @@
   "description": "Reproduzierbare Evaluation des AugmentAble-Userscripts gegen den AccessGuru-Benchmark",
   "type": "module",
   "scripts": {
+    "test": "node scripts/test-cases.mjs",
     "fetch": "node scripts/fetch-accessguru.mjs",
     "fetch:live": "node scripts/fetch-pages-live.mjs",
+    "fetch:vizwiz": "node scripts/fetch-vizwiz.mjs",
+    "ai-check": "node scripts/ai-check.mjs",
     "eval:contrast": "node scripts/eval-contrast.mjs",
     "eval:semantic": "node scripts/eval-semantic.mjs && python3 scripts/similarity.py",
     "eval:pages": "node scripts/eval-pages.mjs",
+    "eval:vizwiz": "node scripts/eval-vizwiz.mjs && python3 scripts/vizwiz_similarity.py",
     "report": "node scripts/report.mjs",
+    "compare": "node scripts/compare.mjs",
+    "playground": "node scripts/build-playground.mjs",
     "smoke": "node scripts/smoke.mjs",
     "all": "npm run eval:contrast && npm run eval:semantic && npm run eval:pages && npm run report"
   },

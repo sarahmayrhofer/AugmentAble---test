@@ -1,9 +1,8 @@
 {
-  "_hinweis": "Referenzwerte für Userscript v140.0 (sha256 dec00cf3…). Nach Skriptänderungen bewusst aktualisieren.",
-  "contrast": {
-    "faelle": 553,
-    "A_angefasst": 293,
-    "A_orig": {
+  "_hinweis": "Referenzwerte je Skriptversion. Nach einer gewollten Skriptänderung hier bewusst aktualisieren.",
+  "original": {
+    "_version": "v140",
+    "contrast_A_orig": {
       "behoben": 175,
       "verbessert, reicht nicht": 91,
       "verschlechtert": 25,
@@ -13,17 +12,50 @@
       "war schon ok": 0,
       "war ok, trotzdem geändert": 0,
       "war ok, durch Skript unter Schwelle": 0
-    }
+    },
+    "contrast_A_markiert": 293,
+    "contrast_B_markiert": 0,
+    "semantic_changed": {
+      "image-alt-not-descriptive": 0,
+      "lang-mismatch": 0,
+      "missing-lang-tag": 0,
+      "link-text-mismatch": 2,
+      "form-label-mismatch": 3,
+      "ambiguous-heading": 0,
+      "page-title-not-descriptive": 0,
+      "button-label-mismatch": 3
+    },
+    "crash": true,
+    "fixture_overwritten": ["SVG versteckt", "Warntext (title)", "aria-label gesetzt", "aria-label gesetzt"],
+    "fixture_lang": "en"
   },
-  "semantic_changed": {
-    "image-alt-not-descriptive": 0,
-    "lang-mismatch": 0,
-    "missing-lang-tag": 0,
-    "link-text-mismatch": 2,
-    "form-label-mismatch": 3,
-    "ambiguous-heading": 0,
-    "page-title-not-descriptive": 0,
-    "button-label-mismatch": 3
-  },
-  "fixture_overwritten": ["SVG versteckt", "Warntext (title)", "aria-label gesetzt", "aria-label gesetzt"]
+  "fixed": {
+    "_version": "v141",
+    "contrast_A_orig": {
+      "behoben": 194,
+      "verbessert, reicht nicht": 99,
+      "verschlechtert": 0,
+      "geändert, Kontrast gleich": 0,
+      "markiert, Farbe unverändert": 0,
+      "unter Schwelle, nicht angefasst": 260,
+      "war schon ok": 0,
+      "war ok, trotzdem geändert": 0,
+      "war ok, durch Skript unter Schwelle": 0
+    },
+    "contrast_A_markiert": 293,
+    "contrast_B_markiert": 293,
+    "semantic_changed": {
+      "image-alt-not-descriptive": 0,
+      "lang-mismatch": 0,
+      "missing-lang-tag": 0,
+      "link-text-mismatch": 0,
+      "form-label-mismatch": 0,
+      "ambiguous-heading": 0,
+      "page-title-not-descriptive": 0,
+      "button-label-mismatch": 0
+    },
+    "crash": false,
+    "fixture_overwritten": [],
+    "fixture_lang": "de"
+  }
 }
