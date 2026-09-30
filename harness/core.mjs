@@ -26,19 +26,31 @@ export const CONFIG = {
   AXE_TAGS: ['wcag2a', 'wcag2aa', 'wcag2aaa', 'wcag21a', 'wcag21aa', 'best-practice'],
 };
 
-export const OUT = path.join(ROOT, 'results');
+// Welche Skriptversion geprüft wird: SCRIPT=fixed (Standard, v141) oder SCRIPT=original (v140)
+export const SCRIPTS = {
+  fixed: path.join(ROOT, 'userscript', 'augmentable.user.js'),
+  original: path.join(ROOT, 'userscript', 'original', 'augmentable-v140.user.js'),
+};
+export const SCRIPT = process.env.SCRIPT || 'fixed';
+if (!SCRIPTS[SCRIPT]) throw new Error(`SCRIPT=${SCRIPT} unbekannt (fixed | original)`);
+export const OUT = path.join(ROOT, 'results', SCRIPT);
 mkdirSync(OUT, { recursive: true });
 
-export const USERSCRIPT_PATH = path.join(ROOT, 'userscript', 'augmentable.user.js');
+export const USERSCRIPT_PATH = SCRIPTS[SCRIPT];
 const USERSCRIPT_RAW = readFileSync(USERSCRIPT_PATH, 'utf8');
 export const USERSCRIPT_SHA256 = createHash('sha256').update(USERSCRIPT_RAW).digest('hex');
 export const USERSCRIPT_VERSION = (USERSCRIPT_RAW.match(/@version\s+(\S+)/) || [])[1];
 const AXE_SRC = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 export const AXE_VERSION = require('axe-core/package.json').version;
 
-function userscriptSource() {
-  let src = USERSCRIPT_RAW;
-  if (CONFIG.AI) {
+export function loadScript(name) {
+  const raw = readFileSync(SCRIPTS[name], 'utf8');
+  return { raw, version: (raw.match(/@version\s+(\S+)/) || [])[1], sha256: createHash('sha256').update(raw).digest('hex') };
+}
+
+function userscriptSource(raw = USERSCRIPT_RAW, ai = CONFIG.AI) {
+  let src = raw;
+  if (ai) {
     const before = src;
     src = src.replace('setInterval(processNextImage, 6000)', `setInterval(processNextImage, ${CONFIG.AI_INTERVAL_MS})`);
     if (src === before) throw new Error('Intervall-Zeile im Userscript nicht gefunden – Harness an neue Skriptversion anpassen');
@@ -52,10 +64,14 @@ const SHIM = (aiEnabled) => {
   const log = { gmXhr: [], prompts: 0, gmSet: [] };
   window.__augLog = log;
   window.__augShim = {
-    GM_getValue: (k, d) => (k === 'hf_api_key' ? (aiEnabled ? 'HARNESS_PLACEHOLDER' : '') : d),
+    // KI-Modus = Nutzer:in hat zugestimmt (v141: ai_enabled) und einen Key hinterlegt
+    GM_getValue: (k, d) => (k === 'hf_api_key' ? (aiEnabled ? 'HARNESS_PLACEHOLDER' : '') : k === 'ai_enabled' ? aiEnabled : d),
     GM_setValue: (k, v) => { log.gmSet.push(k); },
     GM_xmlhttpRequest: (details) => {
-      const entry = { url: details.url, t0: Date.now() };
+      // Anfrage ohne Bilddaten mitschreiben (Prompt, Modell) – für Tests des KI-Pfads
+      let prompt = null, model = null;
+      try { const b = JSON.parse(details.data); model = b.model; prompt = b.messages[0].content.filter((c) => c.type === 'text').map((c) => c.text).join(' '); } catch {}
+      const entry = { url: details.url, t0: Date.now(), prompt, requestModel: model };
       log.gmXhr.push(entry);
       // Der echte Key bleibt im Node-Prozess; die Seite sieht ihn nie.
       window.__augXhr({ url: details.url, method: details.method, data: details.data })
@@ -74,24 +90,24 @@ const SHIM = (aiEnabled) => {
 // ─── KI-Proxy mit Cache (Reproduzierbarkeit) ─────────────────────────────────
 const CACHE_DIR = path.join(ROOT, 'cache', 'ai');
 export const aiLog = [];
-async function aiProxy(req, pageId) {
+async function aiProxy(req, pageId, ai = CONFIG.AI) {
   const body = req.data || '';
   let model = null; try { model = JSON.parse(body).model; } catch {}
   const key = createHash('sha256').update(req.url + '\n' + body).digest('hex');
   const file = path.join(CACHE_DIR, key + '.json');
   const rec = { page: pageId, model, key, t: new Date().toISOString() };
-  if (existsSync(file)) {
+  if (existsSync(file) && !process.env.AI_NO_CACHE) {
     const c = JSON.parse(readFileSync(file, 'utf8'));
     aiLog.push({ ...rec, status: c.status, cached: true, text: extractText(c.responseText) });
     return { ...c, cached: true, model };
   }
-  if (CONFIG.AI && process.env.AI_MOCK) {
+  if (ai && process.env.AI_MOCK) {
     // Test der Verkabelung ohne echten API-Aufruf
     const responseText = JSON.stringify({ choices: [{ message: { content: 'MOCK description of the image' } }] });
     aiLog.push({ ...rec, status: 200, cached: false, mock: true, text: 'MOCK description of the image' });
     return { status: 200, responseText, cached: false, model };
   }
-  if (!CONFIG.AI || !process.env.HF_API_KEY) {
+  if (!ai || !process.env.HF_API_KEY) {
     aiLog.push({ ...rec, status: 0, blocked: true });
     return { status: 0, responseText: '', model };
   }
@@ -123,14 +139,14 @@ export async function launch() {
  * Öffnet eine Seite. html wird unter baseUrl ausgeliefert (Origin bleibt erhalten).
  * offline: alle anderen Requests werden abgebrochen (außer extraRoutes).
  */
-export async function openPage(browser, { pageId, baseUrl, html, extraRoutes = {} }) {
+export async function openPage(browser, { pageId, baseUrl, html, extraRoutes = {}, ai = CONFIG.AI }) {
   const context = await browser.newContext({ bypassCSP: true, viewport: { width: 1280, height: 900 }, locale: 'en-US' });
   const page = await context.newPage();
   const errors = [];
   const blocked = [];
   page.on('pageerror', (e) => errors.push({ msg: String(e.message || e), fromScript: /augmentable\.user\.js/.test(e.stack || '') }));
-  await page.exposeFunction('__augXhr', (req) => aiProxy(req, pageId));
-  await page.addInitScript(SHIM, CONFIG.AI);
+  await page.exposeFunction('__augXhr', (req) => aiProxy(req, pageId, ai));
+  await page.addInitScript(SHIM, ai);
   const main = new URL(baseUrl).href;
   await page.route('**/*', async (route) => {
     const req = route.request();
@@ -139,7 +155,7 @@ export async function openPage(browser, { pageId, baseUrl, html, extraRoutes = {
       return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
     }
     for (const [pattern, file] of Object.entries(extraRoutes)) {
-      if (url.includes(pattern)) return route.fulfill({ path: file });
+      if (url.includes(pattern)) return Buffer.isBuffer(file) ? route.fulfill({ body: file, contentType: 'image/png' }) : route.fulfill({ path: file });
     }
     if (CONFIG.NETWORK === 'offline') { blocked.push(url); return route.abort(); }
     return route.continue();
@@ -153,15 +169,15 @@ export async function openPage(browser, { pageId, baseUrl, html, extraRoutes = {
 }
 
 /** Injiziert AugmentAble und wartet, bis Observer-Durchläufe (und ggf. KI) abgeschlossen sind. */
-export async function injectAugmentAble(page) {
+export async function injectAugmentAble(page, { raw = USERSCRIPT_RAW, ai = CONFIG.AI } = {}) {
   let injectError = null;
   try {
-    await page.evaluate(userscriptSource());
+    await page.evaluate(userscriptSource(raw, ai));
   } catch (e) {
     injectError = String(e.message || e).split('\n')[0];
   }
   await page.waitForTimeout(CONFIG.SETTLE_MS);
-  if (CONFIG.AI && !injectError) {
+  if (ai && !injectError) {
     // warten, bis keine Bilder mehr in Bearbeitung sind
     const t0 = Date.now();
     while (Date.now() - t0 < CONFIG.AI_WAIT_MS) {
@@ -225,7 +241,7 @@ export async function pool(items, n, fn) {
 export function meta() {
   return {
     created: new Date().toISOString(),
-    userscript: { version: USERSCRIPT_VERSION, sha256: USERSCRIPT_SHA256 },
+    userscript: { name: SCRIPT, version: USERSCRIPT_VERSION, sha256: USERSCRIPT_SHA256 },
     axe: AXE_VERSION,
     chromium: null,
     config: { ...CONFIG, HF_KEY_PRESENT: !!process.env.HF_API_KEY, AI_MOCK: !!process.env.AI_MOCK },

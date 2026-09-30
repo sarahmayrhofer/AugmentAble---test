@@ -7,7 +7,8 @@ Fallback ohne sentence-transformers: Token-F1 (im Ergebnis als 'metric' vermerkt
 import json, re, statistics, sys
 from pathlib import Path
 
-RES = Path(__file__).resolve().parent.parent / "results"
+import os
+RES = Path(__file__).resolve().parent.parent / "results" / os.environ.get("SCRIPT", "fixed")
 data = json.loads((RES / "semantic.json").read_text())
 
 try:
