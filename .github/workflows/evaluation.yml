@@ -1,0 +1,131 @@
+name: Evaluation
+
+on:
+  push:
+    paths: ['userscript/**', 'harness/**', 'scripts/**', 'tests/**', 'package*.json', '.github/workflows/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: 'Welche Skriptversion: both = v140 und v141 im Vergleich'
+        type: choice
+        options: [both, fixed, original]
+        default: both
+      ai:
+        description: 'KI-Bildbeschreibung mit echtem HuggingFace-Aufruf (Secret HF_API_KEY nötig)'
+        type: boolean
+        default: false
+      vizwiz_n:
+        description: 'KI: Anzahl VizWiz-Bilder (nur mit ai)'
+        type: string
+        default: '100'
+      network:
+        description: 'offline = nur gespeichertes HTML; live = CSS/Bilder nachladen'
+        type: choice
+        options: [offline, live]
+        default: offline
+      pages_source:
+        description: 'darus = gespeicherte Seiten; live = heute neu abrufen'
+        type: choice
+        options: [darus, live]
+        default: darus
+      limit:
+        description: 'Nur die ersten N Seiten (leer = alle)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run fetch
+        env: { SKIP_DARUS: '1' }
+      - run: npm run smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: smoke-results, path: results/ }
+
+  full:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      AI: ${{ inputs.ai && '1' || '0' }}
+      NETWORK: ${{ inputs.network }}
+      LIMIT: ${{ inputs.limit }}
+      VIZWIZ_N: ${{ inputs.vizwiz_n }}
+      HF_API_KEY: ${{ inputs.ai && secrets.HF_API_KEY || '' }}
+      CONCURRENCY: '4'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: SBERT
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install sentence-transformers==3.3.1
+      - uses: actions/cache@v4
+        with:
+          path: |
+            data/accessguru
+            data/darus
+            data/pages
+            data/vizwiz
+          key: data-${{ inputs.pages_source }}-v1
+      - if: ${{ inputs.ai }}
+        uses: actions/cache@v4
+        with:
+          path: cache/ai
+          key: ai-${{ github.run_id }}
+          restore-keys: ai-
+      - name: Prüfen, ob HF_API_KEY gesetzt ist
+        if: ${{ inputs.ai }}
+        run: |
+          if [ -z "$HF_API_KEY" ]; then echo "::error::Secret HF_API_KEY fehlt"; exit 1; fi
+      - name: Datensatz holen
+        run: npm run fetch
+        env: { SKIP_DARUS: "${{ inputs.pages_source == 'live' && '1' || '' }}" }
+      - if: ${{ inputs.pages_source == 'live' }}
+        run: npm run fetch:live
+      - if: ${{ inputs.ai }}
+        run: npm run fetch:vizwiz
+      - name: Testfälle je Kritikpunkt
+        run: npm test
+        continue-on-error: true
+      - name: Evaluation
+        run: |
+          if [ "${{ inputs.script }}" = "both" ]; then VERSIONS="original fixed"; else VERSIONS="${{ inputs.script }}"; fi
+          for S in $VERSIONS; do
+            echo "::group::$S"
+            export SCRIPT=$S
+            npm run eval:contrast
+            npm run eval:semantic
+            npm run eval:pages
+            if [ "$AI" = "1" ]; then npm run eval:vizwiz; fi
+            npm run report
+            echo "::endgroup::"
+          done
+          if [ "${{ inputs.script }}" = "both" ]; then npm run compare; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-${{ github.run_number }}${{ inputs.ai && '-ki' || '' }}
+          path: |
+            results/
+            data/darus-manifest.json
+            data/pages/_snapshot.json
+          if-no-files-found: warn
