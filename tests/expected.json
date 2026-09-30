@@ -1,0 +1,29 @@
+{
+  "_hinweis": "Referenzwerte für Userscript v140.0 (sha256 dec00cf3…). Nach Skriptänderungen bewusst aktualisieren.",
+  "contrast": {
+    "faelle": 553,
+    "A_angefasst": 293,
+    "A_orig": {
+      "behoben": 175,
+      "verbessert, reicht nicht": 91,
+      "verschlechtert": 25,
+      "geändert, Kontrast gleich": 0,
+      "markiert, Farbe unverändert": 2,
+      "unter Schwelle, nicht angefasst": 260,
+      "war schon ok": 0,
+      "war ok, trotzdem geändert": 0,
+      "war ok, durch Skript unter Schwelle": 0
+    }
+  },
+  "semantic_changed": {
+    "image-alt-not-descriptive": 0,
+    "lang-mismatch": 0,
+    "missing-lang-tag": 0,
+    "link-text-mismatch": 2,
+    "form-label-mismatch": 3,
+    "ambiguous-heading": 0,
+    "page-title-not-descriptive": 0,
+    "button-label-mismatch": 3
+  },
+  "fixture_overwritten": ["SVG versteckt", "Warntext (title)", "aria-label gesetzt", "aria-label gesetzt"]
+}
