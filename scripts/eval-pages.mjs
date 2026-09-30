@@ -47,8 +47,11 @@ const ANALYZE = () => {
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).replace(/[-_]/g, ' ');
 
   // Herkunft eines vom Skript gesetzten aria-label (Logik aus fixAriaLabels/fixForms nachgebildet)
+  // v141 schreibt die Quelle selbst in data-a11y-src
+  const SRC141 = { 'svg-title': 'SVG-title', klasse: 'aus CSS-Klasse geraten', placeholder: 'placeholder', nachbartext: 'Nachbartext', dekorativ: 'dekorativ (alt="")' };
   function labelSource(el) {
     const al = el.getAttribute('aria-label');
+    if (el.hasAttribute('data-a11y-src')) return SRC141[el.getAttribute('data-a11y-src')] || el.getAttribute('data-a11y-src');
     if (al == null) return null;
     if (el.hasAttribute('data-a11y-form')) {
       if (el.placeholder && al === cap(el.placeholder)) return 'placeholder';
@@ -74,7 +77,7 @@ const ANALYZE = () => {
   }
   const BUCKET = {
     'SVG-title': 'belegt', 'Bild-alt': 'belegt', 'title-Attribut': 'belegt', placeholder: 'belegt',
-    'name-Attribut': 'ungeprüft', 'aus CSS-Klasse geraten': 'ungeprüft',
+    'name-Attribut': 'ungeprüft', 'aus CSS-Klasse geraten': 'ungeprüft', Nachbartext: 'ungeprüft', 'dekorativ (alt="")': 'belegt',
     Literal: 'Schein', URL: 'Schein', 'nur Feldtyp': 'Schein', 'leeres Bild-alt': 'Schein', 'Warntext (title)': 'Schein', sonstiges: 'ungeprüft',
   };
 
@@ -96,7 +99,7 @@ const ANALYZE = () => {
   for (const el of document.querySelectorAll('[data-a11y-aria], [data-a11y-form]')) {
     if (el.closest('#a11y-panel')) continue;
     const kind = el.hasAttribute('data-a11y-form') ? 'Formularfeld' : el.tagName === 'A' ? 'Link' : el.tagName === 'BUTTON' ? 'Button' : el.tagName.toLowerCase();
-    if (kind === 'svg') continue;
+    if (kind === 'svg' || el.tagName === 'IMG') continue;
     const s = labelSource(el);
     const before = el.getAttribute('data-eval-name0');
     labels.push({ kind, src: s, bucket: BUCKET[s] || 'ungeprüft', label: el.getAttribute('aria-label'), nameBefore: before, nameAfter: accName(el),
@@ -116,7 +119,8 @@ const ANALYZE = () => {
 
   // title-Attribute mit Warntext
   const warnTitles = [];
-  for (const el of document.querySelectorAll('[data-a11y-label], [data-a11y-heading]')) {
+  for (const el of document.querySelectorAll('[title]')) {
+    if (el.closest('#a11y-panel') || !el.title.startsWith('⚠')) continue;
     const t0 = el.getAttribute('data-eval-title0');
     const nm = accName(el) || '';
     warnTitles.push({ tag: el.tagName.toLowerCase(), hadTitle: t0 != null && t0 !== '\u0000' && t0 !== '', overwroteTitle: t0 != null && t0 !== '\u0000' && t0 !== '' && t0 !== el.title,
@@ -139,6 +143,7 @@ const ANALYZE = () => {
       kiBilder: [...document.querySelectorAll('img[data-ai-done]')].reduce((o, i) => (o[i.getAttribute('data-ai-done') || 'retry'] = (o[i.getAttribute('data-ai-done') || 'retry'] || 0) + 1, o), {}),
       kiKandidaten: [...document.querySelectorAll('img')].filter((i) => i.width > 100 && i.height > 50 && (!i.alt || i.alt.trim() === '' || i.alt === i.src || i.alt === 'image') && i.src && i.naturalWidth > 50).length,
       bilderOhneAltGesamt: [...document.querySelectorAll('img:not([alt])')].length,
+      gemeldetOhneName: [...document.querySelectorAll('[data-a11y-label]')].filter((e) => !e.closest('#a11y-panel')).length,
     },
     langAfter: document.documentElement.getAttribute('lang'),
     gm: { xhr: window.__augLog.gmXhr.length, prompts: window.__augLog.prompts },
