@@ -125,7 +125,7 @@ async function aiProxy(req, pageId, ai = CONFIG.AI) {
   const out = { status, responseText };
   mkdirSync(CACHE_DIR, { recursive: true });
   if (status === 200) writeFileSync(file, JSON.stringify(out));
-  aiLog.push({ ...rec, status, cached: false, ms: Date.now() - t0, text: extractText(responseText) });
+  aiLog.push({ ...rec, status, cached: false, ms: Date.now() - t0, text: extractText(responseText), error: status === 200 ? undefined : responseText.slice(0, 400) });
   return { ...out, cached: false, model };
 }
 function extractText(rt) { try { return JSON.parse(rt).choices[0].message.content.trim(); } catch { return null; } }
