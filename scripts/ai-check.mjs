@@ -25,7 +25,7 @@ const KEY = process.env.HF_API_KEY;
 const API = 'https://router.huggingface.co/v1';
 
 const script = loadScript(SCRIPT);
-const models = [...script.raw.matchAll(/'([^']+:[a-z-]+)'/g)].map((m) => m[1]).filter((m) => m.includes('/'));
+const models = [...((script.raw.match(/const MODELS\s*=\s*\[([\s\S]*?)\]/) || [])[1] || '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
 const supp = path.join(AG, 'data', 'accessguru_dataset', 'accessguru_semantic_violations_sampled_dataset_supp_material');
 const IMAGES = [
   { file: '1.png', note: 'Logo (W3C)' },
@@ -84,7 +84,7 @@ async function describe(model, url) {
 
 // a) Skript-Modelle mit öffentlicher Bild-URL, zusätzlich ohne Provider-Suffix (Router wählt selbst)
 const direct = [];
-const directIds = [...models, ...new Set(models.map((m) => m.split(':')[0]))];
+const directIds = [...new Set([...models, ...models.map((m) => m.split(':')[0])])];
 for (const m of directIds) { const d = await describe(m, PUBLIC_IMG); direct.push({ model: m, ...d }); console.log(`URL-Test ${m}: HTTP ${d.status} ${d.text ? JSON.stringify(d.text) : d.error}`); }
 
 // b) verfügbare Bild-Modelle

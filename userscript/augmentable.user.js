@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AugmentAbleDemo
 // @namespace    http://tampermonkey.net/
-// @version      141.0
+// @version      141.1
 // @description  AI Image Description (opt-in), Contrast, ARIA, Forms, Landmarks, Heading Check & Focus Enforcer
 // @author       Your Name / Research Group
 // @match        *://*/*
@@ -36,6 +36,8 @@
  *      Bilder in bereits benannten Links/Buttons bekommen alt="" statt einer KI-Beschreibung.
  *      Der Prompt enthält Seitensprache und Kontext (figcaption/Überschrift); bei CORS-Fehler wird
  *      die Bild-URL statt Canvas-Daten gesendet. Das Overlay erscheint nur im Hervorhebungsmodus.
+ *      Modellliste aktualisiert (KI-Check 2026-10), Fallback auf das nächste Modell bei jedem
+ *      Modellfehler; bei fehlendem Guthaben/ungültigem Key Hinweis im Panel statt weiterer Anfragen.
  *  K10 Panel: Farben mit AAA-Kontrast, Landmark (aside mit Namen), scrollbare Bereiche fokussierbar.
  */
 
@@ -47,11 +49,14 @@
     let HF_KEY     = GM_getValue('hf_api_key', '');
 
     const API_URL = 'https://router.huggingface.co/v1/chat/completions';
+    // Stand KI-Check 2026-10: die v140-Modelle Qwen2.5-VL-7B (nebius) und Qwen2-VL-7B sind bei
+    // HuggingFace nicht mehr verfügbar. Kein fester Provider mehr – der Router wählt selbst.
     const MODELS  = [
-        'CohereLabs/aya-vision-32b:cohere',
-        'Qwen/Qwen2.5-VL-7B-Instruct:nebius',
-        'Qwen/Qwen2-VL-7B-Instruct:fastest'
+        'CohereLabs/aya-vision-32b',
+        'Qwen/Qwen3-VL-30B-A3B-Instruct',
+        'google/gemma-3-27b-it'
     ];
+    let aiBlocked = false; // z. B. kein Guthaben – dann keine weiteren Anfragen
     let modelIndex  = 0;
     let highlightOn = false;
     let stats       = { altText:0, ariaLabels:0, contrast:0, forms:0, misc:0, headings:0, labels:0 };
@@ -567,7 +572,13 @@
                         showOverlay(img, '🤖 ' + desc);
                         updateStat('altText', 1);
                         log('🖼 ' + desc.substring(0,55) + '…', '#7ec8e3');
-                    } else if (data.error && (data.error.code === 'model_not_supported' || res.status === 503) && modelIndex < MODELS.length - 1) {
+                    } else if (res.status === 401 || res.status === 402 || res.status === 403) {
+                        // Konto-Problem: weitere Modelle helfen nicht, nichts mehr senden
+                        aiBlocked = true;
+                        img.setAttribute('data-ai-done','failed');
+                        logIssue(res.status === 402 ? '🤖 HuggingFace: kein Guthaben mehr – KI pausiert' : '🤖 HuggingFace-Key ungültig oder ohne Berechtigung – KI pausiert');
+                    } else if ([400, 404, 422, 429, 500, 502, 503].includes(res.status) && modelIndex < MODELS.length - 1) {
+                        // Modell nicht (mehr) verfügbar oder überlastet → nächstes Modell der Kette
                         modelIndex++;
                         img.setAttribute('data-ai-done','');
                         setTimeout(() => processImage(img), 1500);
@@ -626,7 +637,7 @@
     }
 
     function processNextImage() {
-        if (!HF_KEY || !AI_ENABLED) return;
+        if (!HF_KEY || !AI_ENABLED || aiBlocked) return;
         const img = Array.from(document.querySelectorAll('img')).find(i =>
             i.width > 100 && i.height > 50
             && needsDescription(i)
